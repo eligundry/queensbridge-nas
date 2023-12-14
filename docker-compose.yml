@@ -1,0 +1,30 @@
+services:
+  qbittorrent:
+    image: j4ym0/pia-qbittorrent
+    container_name: qbittorrent
+    init: true
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - '8888:8888'
+    environment:
+      - REGION='US New York'
+      - USER=${PIA_USERNAME}
+      - PASSWORD=${PIA_PASSWORD}
+      - TZ='America/New_York'
+    volumes:
+      - ${DATA_DIR}:/mnt/nas
+
+  plex:
+    container_name: plex
+    image: plexinc/pms-docker
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TZ='America/New_York'
+      - PLEX_CLAIM
+    volumes:
+      - ${DATA_DIR}:/data
+      - ${DATA_DIR}/.plex/config:/config
+      - ${DATA_DIR}/.plex/transcode:/transcode
