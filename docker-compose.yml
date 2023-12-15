@@ -4,25 +4,28 @@ services:
     container_name: qbittorrent
     init: true
     restart: unless-stopped
+    network_mode: host
     cap_add:
       - NET_ADMIN
     ports:
       - '8888:8888'
     environment:
-      - REGION='US New York'
+      - REGION=US_EAST
       - USER=${PIA_USERNAME}
       - PASSWORD=${PIA_PASSWORD}
-      - TZ='America/New_York'
+      - TZ=America/New_York
     volumes:
       - ${DATA_DIR}:/mnt/nas
 
   plex:
     container_name: plex
-    image: plexinc/pms-docker
+    image: linuxserver/plex
     restart: unless-stopped
     network_mode: host
+    ports:
+      - '8080:80'
     environment:
-      - TZ='America/New_York'
+      - TZ=America/New_York
       - PLEX_CLAIM
     volumes:
       - ${DATA_DIR}:/data
