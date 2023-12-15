@@ -16,6 +16,8 @@ services:
       - TZ=America/New_York
     volumes:
       - ${DATA_DIR}:/mnt/nas
+      - ${DATA_DIR}/.qbittorrent/config:/config
+      - ${DATA_DIR}/Torrents:/downloads
 
   plex:
     container_name: plex
@@ -26,8 +28,10 @@ services:
       - '8080:80'
     environment:
       - TZ=America/New_York
-      - PLEX_CLAIM
     volumes:
       - ${DATA_DIR}:/data
       - ${DATA_DIR}/.plex/config:/config
       - ${DATA_DIR}/.plex/transcode:/transcode
+      - ${DATA_DIR}/TV:/tv
+      - ${DATA_DIR}/Movies:/movies
+      - ${DATA_DIR}/Music:/music
