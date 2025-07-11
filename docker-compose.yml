@@ -8,7 +8,7 @@ services:
     cap_add:
       - NET_ADMIN
     ports:
-      - '8888:8888'
+      - "8888:8888"
     environment:
       - REGION=US_EAST
       - USER=${PIA_USERNAME}
@@ -25,7 +25,7 @@ services:
     restart: unless-stopped
     network_mode: host
     ports:
-      - '8080:80'
+      - "8080:80"
     environment:
       - TZ=America/New_York
     volumes:
@@ -35,3 +35,15 @@ services:
       - ${DATA_DIR}/TV:/tv
       - ${DATA_DIR}/Movies:/movies
       - ${DATA_DIR}/Music:/music
+
+  home-assistant:
+    container_name: home-assistant
+    image: "ghcr.io/home-assistant/home-assistant:stable"
+    environment:
+      - TZ=America/New_York
+    volumes:
+      - ${DATA_DIR}/.home-assistant:/config
+      - /run/dbus:/run/dbus:ro
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
