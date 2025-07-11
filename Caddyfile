@@ -1,0 +1,33 @@
+# QBittorrent Web UI
+qbittorrent.tail7aee2.ts.net {
+    tls tailscale
+    reverse_proxy localhost:8888
+}
+
+# Plex Media Server
+plex.tail7aee2.ts.net {
+    tls tailscale
+    reverse_proxy localhost:8080
+}
+
+# Home Assistant
+home-assistant.tail7aee2.ts.net {
+    tls tailscale
+    reverse_proxy localhost:8123
+}
+
+# Synology NAS Web UI (DSM)
+nas.tail7aee2.ts.net {
+    tls tailscale
+    reverse_proxy localhost:5000
+}
+
+# Synology NAS Web UI (DSM HTTPS)
+it-was-written.tail7aee2.ts.net {
+    tls tailscale
+    reverse_proxy https://localhost:5001 {
+        transport http {
+            tls_insecure_skip_verify
+        }
+    }
+}
