@@ -47,7 +47,7 @@ services:
     environment:
       - TZ=America/New_York
       - PLEX_CLAIM=${PLEX_CLAIM}
-      - ADVERTISE_IP=https://it-was-written.tail7aee2.ts.net:8445/
+      - ADVERTISE_IP=https://it-was-written.tail7aee2.ts.net:10000/
     volumes:
       - ${DATA_DIR}:/data
       - ${DATA_DIR}/.plex/config:/config
