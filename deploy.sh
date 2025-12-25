@@ -107,6 +107,9 @@ reload_containers() {
   # Navigate to docker directory and restart services
   ssh "$NAS_HOST" << 'ENDSSH'
     cd /volume1/docker
+    # Pull latest images
+    echo "Pulling latest images..."
+    /usr/local/bin/docker compose pull
     # Stop and remove containers, then recreate them (use full path for docker)
     /usr/local/bin/docker compose down --remove-orphans
     /usr/local/bin/docker compose up -d --force-recreate
