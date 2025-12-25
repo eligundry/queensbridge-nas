@@ -4,14 +4,12 @@ services:
     container_name: caddy
     restart: unless-stopped
     network_mode: host
-    ports:
-      - "80:80"
-      - "443:443"
     volumes:
       - ${DATA_DIR}/.caddy/data:/data
       - ${DATA_DIR}/.caddy/config:/config
-      - ${DATA_DIR}/Caddyfile:/etc/caddy/Caddyfile
-      - /var/lib/tailscale:/var/lib/tailscale:ro
+      - ${DATA_DIR}/.caddy/Caddyfile:/etc/caddy/Caddyfile
+      - /var/packages/Tailscale/var:/var/lib/tailscale:ro
+      - /var/packages/Tailscale/var:/var/run/tailscale:ro
     environment:
       - TZ=America/New_York
     depends_on:

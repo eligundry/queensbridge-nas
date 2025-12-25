@@ -14,11 +14,10 @@ a torrent powered Tivo device through Plex. All access goes through Tailscale.
 
 All services are accessible with automatic HTTPS certificates via Tailscale:
 
-- **QBittorrent** - `qbittorrent.tail7aee2.ts.net` - Torrent client with PIA VPN
-- **Plex** - `plex.tail7aee2.ts.net` - Media server for movies, TV, and music
-- **Home Assistant** - `home-assistant.tail7aee2.ts.net` - Home automation platform
-- **Synology DSM** - `nas.tail7aee2.ts.net` - NAS web interface (HTTP)
-- **Synology DSM (Secure)** - `it-was-written.tail7aee2.ts.net` - NAS web interface (HTTPS)
+- **QBittorrent** - `https://it-was-written.tail7aee2.ts.net:8444` - Torrent client with PIA VPN
+- **Plex** - `https://it-was-written.tail7aee2.ts.net:8445` - Media server for movies, TV, and music
+- **Home Assistant** - `https://it-was-written.tail7aee2.ts.net:8446` - Home automation platform
+- **Synology DSM** - `https://it-was-written.tail7aee2.ts.net:8443` - NAS web interface
 
 ## SSL/TLS Configuration
 
@@ -26,5 +25,14 @@ All services are accessible with automatic HTTPS certificates via Tailscale:
 - **Tailscale certificates** are automatically obtained and renewed
 - All services accessible only within the Tailscale network
 - No manual certificate management required
+
+## Service Configuration
+
+**QBittorrent** requires reverse proxy configuration:
+```ini
+[Preferences]
+WebUI\CSRFProtection=false
+WebUI\HostHeaderValidation=false
+```
 
 To deploy: `docker-compose up -d`
