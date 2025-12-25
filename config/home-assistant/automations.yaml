@@ -1,0 +1,25 @@
+- id: '1752232534388'
+  alias: Toggle Microwave Light
+  description: ''
+  triggers:
+  - trigger: event
+    event_type: microwave_light_toggled
+  conditions: []
+  actions:
+  - action: homeassistant.toggle
+    target:
+      entity_id: select.microwave_lamp
+    data: {}
+  mode: single
+- id: '1752232656227'
+  alias: Microwave Light Off
+  description: ''
+  triggers:
+  - trigger: event
+    event_type: microwave_light_off
+  conditions: []
+  actions:
+  - action: select.select_last
+    target: {}
+    data: {}
+  mode: single

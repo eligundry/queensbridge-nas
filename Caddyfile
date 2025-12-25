@@ -21,11 +21,17 @@ it-was-written.tail7aee2.ts.net:8445 {
     tls {
         get_certificate tailscale
     }
-    reverse_proxy localhost:8080 {
+    reverse_proxy localhost:32400 {
         header_up X-Forwarded-For {remote_host}
         header_up X-Forwarded-Proto https
         header_up X-Forwarded-Host {host}
+        header_up X-Real-IP {remote_host}
         header_up X-Plex-Client-Identifier "caddy-proxy"
+
+        transport http {
+            read_timeout 0
+            write_timeout 0
+        }
     }
 }
 
