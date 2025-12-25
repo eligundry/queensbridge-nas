@@ -28,9 +28,10 @@ services:
     ports:
       - "8888:8888"
     environment:
-      - REGION=US_EAST
-      - USER=${PIA_USERNAME}
-      - PASSWORD=${PIA_PASSWORD}
+      - PIA_REGION=US_EAST
+      - PIA_USERNAME=${PIA_USERNAME}
+      - PIA_PASSWORD=${PIA_PASSWORD}
+      - LEGACY_IPTABLES=true
       - TZ=America/New_York
     volumes:
       - ${DATA_DIR}:/mnt/nas
