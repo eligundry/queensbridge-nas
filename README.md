@@ -35,4 +35,17 @@ WebUI\CSRFProtection=false
 WebUI\HostHeaderValidation=false
 ```
 
+## SSH Access
+
+SSH configuration for proper terminal support is in `~/.ssh/config`:
+
+```ssh-config
+Host nas
+  HostName 100.91.114.32
+  SetEnv TERM=xterm-256color
+  RequestTTY yes
+```
+
+Connect using: `ssh nas`
+
 To deploy: `docker-compose up -d`
