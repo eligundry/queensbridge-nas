@@ -1,6 +1,0 @@
-microwave_control:
-  sequence:
-  - event: microwave_light_control
-    event_data: {}
-  alias: Microwave Control
-  description: ''

@@ -38,7 +38,6 @@ download_configs() {
 
   # Create config directories if they don't exist
   mkdir -p "$SCRIPT_DIR/config/qbittorrent"
-  mkdir -p "$SCRIPT_DIR/config/home-assistant"
 
   # Download QBittorrent config if missing
   if [[ ! -f "$SCRIPT_DIR/config/qbittorrent/qBittorrent.conf" ]]; then
@@ -46,15 +45,6 @@ download_configs() {
     ssh "$NAS_HOST" "cat $NAS_DATA_DIR/.qbittorrent/config/qBittorrent/config/qBittorrent.conf" \
         > "$SCRIPT_DIR/config/qbittorrent/qBittorrent.conf" || warn "Failed to download QBittorrent config"
   fi
-
-  # Download Home Assistant configs if missing
-  for file in configuration.yaml automations.yaml scripts.yaml; do
-    if [[ ! -f "$SCRIPT_DIR/config/home-assistant/$file" ]]; then
-      info "Downloading Home Assistant $file..."
-      ssh "$NAS_HOST" "cat $NAS_DATA_DIR/.home-assistant/$file" \
-          > "$SCRIPT_DIR/config/home-assistant/$file" || warn "Failed to download $file"
-    fi
-  done
 
   success "Configuration files ready"
 }
@@ -76,6 +66,12 @@ sync_files() {
   ssh "$NAS_HOST" "mkdir -p $NAS_DATA_DIR/.caddy"
   ssh "$NAS_HOST" "cat > $NAS_DATA_DIR/.caddy/Caddyfile" < "$SCRIPT_DIR/Caddyfile"
 
+  # Sync host-side healthcheck script (run by DSM Task Scheduler on a cron)
+  info "Syncing nas-healthcheck.sh..."
+  ssh "$NAS_HOST" "mkdir -p $NAS_DATA_DIR/.scripts"
+  ssh "$NAS_HOST" "cat > $NAS_DATA_DIR/.scripts/nas-healthcheck.sh" < "$SCRIPT_DIR/nas-healthcheck.sh"
+  ssh "$NAS_HOST" "chmod +x $NAS_DATA_DIR/.scripts/nas-healthcheck.sh"
+
   # Sync QBittorrent config
   if [[ -f "$SCRIPT_DIR/config/qbittorrent/qBittorrent.conf" ]]; then
     info "Syncing QBittorrent configuration..."
@@ -84,36 +80,22 @@ sync_files() {
         < "$SCRIPT_DIR/config/qbittorrent/qBittorrent.conf"
   fi
 
-  # Sync Home Assistant configs (skip if permission denied)
-  if [[ -d "$SCRIPT_DIR/config/home-assistant" ]]; then
-    info "Syncing Home Assistant configurations..."
-    ssh "$NAS_HOST" "mkdir -p $NAS_DATA_DIR/.home-assistant" || true
-    for file in "$SCRIPT_DIR/config/home-assistant"/*.yaml; do
-      if [[ -f "$file" ]]; then
-        filename=$(basename "$file")
-        ssh "$NAS_HOST" "cat > $NAS_DATA_DIR/.home-assistant/$filename" < "$file" 2>/dev/null || \
-          warn "Skipping $filename (permission denied - Home Assistant manages this file)"
-      fi
-    done
-  fi
-
   success "Files synced successfully"
 }
 
 # Step 4: Reload Container Manager
 reload_containers() {
   info "Reloading Container Manager..."
+  warn "The NAS Docker socket is root-owned, so this step uses sudo."
+  warn "You will be prompted for your NAS sudo password."
 
-  # Navigate to docker directory and restart services
-  ssh "$NAS_HOST" << 'ENDSSH'
-    cd /volume1/docker
-    # Pull latest images
-    echo "Pulling latest images..."
-    /usr/local/bin/docker compose pull
-    # Stop and remove containers, then recreate them (use full path for docker)
-    /usr/local/bin/docker compose down --remove-orphans
-    /usr/local/bin/docker compose up -d --force-recreate
-ENDSSH
+  # -t forces a TTY so sudo can prompt for a password. Pull latest images,
+  # then recreate containers.
+  ssh -t "$NAS_HOST" "cd /volume1/docker && \
+    echo 'Pulling latest images...' && \
+    sudo /usr/local/bin/docker compose pull && \
+    sudo /usr/local/bin/docker compose down --remove-orphans && \
+    sudo /usr/local/bin/docker compose up -d --force-recreate"
 
   success "Container Manager reloaded"
 }
@@ -122,13 +104,55 @@ ENDSSH
 verify_services() {
   info "Verifying services..."
 
-  # Wait a few seconds for containers to start
-  sleep 5
+  # Give containers time to start and pass their healthchecks
+  sleep 15
 
-  # Check container status
-  ssh "$NAS_HOST" "/usr/local/bin/docker compose -f /volume1/docker/compose.yaml ps"
+  # Check container status (sudo: root-owned Docker socket)
+  ssh -t "$NAS_HOST" "sudo /usr/local/bin/docker compose -f /volume1/docker/compose.yaml ps"
+
+  # End-to-end reachability over Tailscale + Funnel
+  echo ""
+  info "Running end-to-end health check..."
+  if [[ -x "$SCRIPT_DIR/healthcheck.sh" ]]; then
+    "$SCRIPT_DIR/healthcheck.sh" || warn "Some services failed the health check — see above."
+  else
+    warn "healthcheck.sh not found or not executable; skipping end-to-end check."
+  fi
 
   success "Deployment complete!"
+}
+
+# Heal broken NAS DNS / networking.
+#
+# Root cause: the PIA qBittorrent container (network_mode: host + NET_ADMIN) runs
+# a VPN kill-switch that sets the HOST's iptables default policies to DROP and
+# rewrites /etc/resolv.conf. If the VPN fails to connect, it leaves the host
+# firewalled off — DNS and all outbound networking die. (qBittorrent is now
+# gated behind the "torrent" compose profile so it can't start automatically,
+# but if it ever ran and wedged, this undoes the damage.)
+#
+# This resets the default policies back to ACCEPT and restores resolv.conf.
+# Requires sudo on the NAS (iptables is not in the passwordless sudo scope), so
+# you'll be prompted for your NAS password.
+heal_dns() {
+  info "Healing NAS DNS/networking (resetting iptables policies + resolv.conf)..."
+  ssh -t "$NAS_HOST" 'sudo bash -s' <<'ENDSSH'
+    echo "Current default policies:"; iptables -S | grep '^-P'
+    iptables -P INPUT ACCEPT
+    iptables -P OUTPUT ACCEPT
+    iptables -P FORWARD ACCEPT
+    echo "Reset to:"; iptables -S | grep '^-P'
+    if ! grep -q '^nameserver' /etc/resolv.conf; then
+      printf 'nameserver 1.1.1.1\nnameserver 1.0.0.1\n' > /etc/resolv.conf
+      echo "resolv.conf restored to 1.1.1.1 / 1.0.0.1"
+    fi
+    if nslookup google.com >/dev/null 2>&1; then
+      echo "DNS OK ✓"
+    else
+      echo "DNS still failing — the iptables state may be deeper-corrupted; a reboot will fully reset it."
+    fi
+ENDSSH
+  success "DNS heal complete"
 }
 
 # Main execution
@@ -147,14 +171,17 @@ main() {
 
   echo ""
   info "Services should be accessible at:"
-  echo "  - QBittorrent: https://it-was-written.tail7aee2.ts.net:8444"
-  echo "  - Plex: https://it-was-written.tail7aee2.ts.net:8445"
-  echo "  - Home Assistant: https://it-was-written.tail7aee2.ts.net:8446"
+  echo "  - QBittorrent:          https://it-was-written.tail7aee2.ts.net:8444"
+  echo "  - Jellyfin (tailnet):   https://it-was-written.tail7aee2.ts.net:8445"
+  echo "  - Jellyfin (public):    https://it-was-written.tail7aee2.ts.net:10000"
   echo ""
-  warn "IMPORTANT: Configure Plex manually:"
-  echo "  1. Go to Plex Settings → Network"
-  echo "  2. Add custom server access URL: https://it-was-written.tail7aee2.ts.net:8445"
-  echo "  3. Set secure connections to 'Preferred'"
+  warn "First-time Jellyfin setup:"
+  echo "  1. Open https://it-was-written.tail7aee2.ts.net:8445 and complete the setup wizard."
+  echo "  2. Add libraries pointing at: /data/tv, /data/movies, /data/music"
+  echo "  3. (Optional) Dashboard → Networking: confirm the Published Server URL"
+  echo "     is https://it-was-written.tail7aee2.ts.net:10000"
+  echo ""
+  echo "  Public access requires Tailscale Funnel (one-time): ./setup-tailscale-funnel.sh"
   echo ""
 }
 
@@ -167,6 +194,10 @@ case "${1:-}" in
   --sync-only)
     validate_prerequisites
     sync_files
+    exit 0
+    ;;
+  --heal-dns)
+    heal_dns
     exit 0
     ;;
   *)

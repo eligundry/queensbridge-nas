@@ -13,16 +13,35 @@ services:
     environment:
       - TZ=America/New_York
     depends_on:
-      - qbittorrent
-      - plex
-      - home-assistant
+      - jellyfin
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
+  # qBittorrent + PIA VPN. Runs in BRIDGE mode (NOT host) — this is how the
+  # upstream image (j4ym0/pia-qbittorrent) is designed to run. Its VPN
+  # kill-switch programs iptables inside the CONTAINER's own network namespace,
+  # so a VPN failure can only firewall off the container, never the host. This
+  # is the fix for the recurring "NAS DNS/networking breaks" problem: previously
+  # this ran network_mode: host, so the kill-switch clobbered the host's iptables
+  # + resolv.conf and took the whole NAS offline whenever the VPN dropped.
+  #
+  # The WebUI is published on host port 8888 (DNAT) so Caddy (host networking)
+  # can reverse-proxy it at localhost:8888. ALLOW_LOCAL_SUBNET_TRAFFIC lets the
+  # LAN/Caddy reach the WebUI through the kill-switch.
+  #
+  # NOTE: Docker bridge port-publishing needs the nat "DOCKER" iptables chain,
+  # which Synology sometimes drops. If the WebUI 8888 stops working after a
+  # reboot, restart Container Manager to recreate it:
+  #   sudo synopkg restart ContainerManager
   qbittorrent:
     image: j4ym0/pia-qbittorrent
     container_name: qbittorrent
     init: true
     restart: unless-stopped
-    network_mode: host
     cap_add:
       - NET_ADMIN
     ports:
@@ -31,40 +50,40 @@ services:
       - PIA_REGION=US_EAST
       - PIA_USERNAME=${PIA_USERNAME}
       - PIA_PASSWORD=${PIA_PASSWORD}
+      - ALLOW_LOCAL_SUBNET_TRAFFIC=true
       - LEGACY_IPTABLES=true
       - TZ=America/New_York
     volumes:
       - ${DATA_DIR}:/mnt/nas
       - ${DATA_DIR}/.qbittorrent/config:/config
       - ${DATA_DIR}/Torrents:/downloads
+    healthcheck:
+      # Long start_period: the WebUI only comes up after the VPN connects, which
+      # can take a couple of minutes.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8888 -o /dev/null || wget -qO /dev/null http://localhost:8888 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
 
-  plex:
-    container_name: plex
-    image: linuxserver/plex
+  jellyfin:
+    container_name: jellyfin
+    image: lscr.io/linuxserver/jellyfin:latest
     restart: unless-stopped
     network_mode: host
-    ports:
-      - "32400:32400"
     environment:
+      - PUID=1026
+      - PGID=100
       - TZ=America/New_York
-      - PLEX_CLAIM=${PLEX_CLAIM}
-      - ADVERTISE_IP=https://it-was-written.tail7aee2.ts.net:10000/
+      - JELLYFIN_PublishedServerUrl=https://it-was-written.tail7aee2.ts.net:10000
     volumes:
-      - ${DATA_DIR}:/data
-      - ${DATA_DIR}/.plex/config:/config
-      - ${DATA_DIR}/.plex/transcode:/transcode
-      - ${DATA_DIR}/TV:/tv
-      - ${DATA_DIR}/Movies:/movies
-      - ${DATA_DIR}/Music:/music
-
-  home-assistant:
-    container_name: home-assistant
-    image: "ghcr.io/home-assistant/home-assistant:stable"
-    environment:
-      - TZ=America/New_York
-    volumes:
-      - ${DATA_DIR}/.home-assistant:/config
-      - /run/dbus:/run/dbus:ro
-    restart: unless-stopped
-    privileged: true
-    network_mode: host
+      - ${DATA_DIR}/.jellyfin/config:/config
+      - ${DATA_DIR}/TV:/data/tv
+      - ${DATA_DIR}/Movies:/data/movies
+      - ${DATA_DIR}/Music:/data/music
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8096/health -o /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
