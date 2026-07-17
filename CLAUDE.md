@@ -8,29 +8,42 @@ This is a Docker-based NAS configuration for hosting media services. All service
 
 ## Architecture
 
-### Service Stack
+### Service Stack (on the NAS)
 - **Caddy** - Reverse proxy handling HTTPS termination with Tailscale certificates
 - **gluetun** - PIA VPN gateway (image: qmcgaw/gluetun); qBittorrent routes through it
 - **QBittorrent** - Torrent client (image: lscr.io/linuxserver/qbittorrent), no built-in VPN — uses `network_mode: service:gluetun`
-- **Jellyfin** - Media server for TV, movies, and music (image: lscr.io/linuxserver/jellyfin)
+
+**Jellyfin runs on the MacBook, not the NAS** (see below). The NAS just stores
+the media and serves it over SMB.
+
+### Jellyfin (MacBook, not this docker-compose)
+Jellyfin was migrated off the NAS because the ARM Realtek RTD1619B can't
+hardware-transcode. It now runs on `macbook-of-eli` (Apple Silicon, VideoToolbox)
+as a headless `launchd` service, reading media from the NAS over SMB and exposed
+via its own Tailscale Funnel at `https://macbook-of-eli.tail7aee2.ts.net:10000`.
+The service files are vendored in `macbook-jellyfin/` and documented in the
+README ("Jellyfin (runs on the MacBook)"). Key gotcha: the launchd service needs
+**Full Disk Access** to read the SMB-mounted media (macOS TCC blocks background
+processes from reading network volumes). Do not add Jellyfin back to
+`docker-compose.yml`.
 
 ### Network Configuration
-Caddy and Jellyfin use `network_mode: host`. gluetun runs in Docker bridge mode
-and qBittorrent shares gluetun's network namespace (`network_mode: service:gluetun`);
+Caddy uses `network_mode: host`. gluetun runs in Docker bridge mode and
+qBittorrent shares gluetun's network namespace (`network_mode: service:gluetun`);
 see the VPN section below. Services are accessible within the Tailscale network at
 `it-was-written.tail7aee2.ts.net` with different ports:
 - 8444 - QBittorrent
-- 8445 - Jellyfin (tailnet)
-- 10000 - Jellyfin (public, via Tailscale Funnel → Caddy :8445)
 - 8443 - Synology DSM
+
+Jellyfin is on a different tailnet node: `https://macbook-of-eli.tail7aee2.ts.net:10000`.
 
 ### Volume Management
 All service data is stored under `${DATA_DIR}` with the following structure:
 - `.caddy/` - Caddy configuration and certificates
 - `.qbittorrent/config/` - QBittorrent configuration
 - `Torrents/` - QBittorrent downloads
-- `.jellyfin/config/` - Jellyfin configuration (and cache)
-- `TV/`, `Movies/`, `Music/` - Jellyfin media libraries (mounted at `/data/tv`, `/data/movies`, `/data/music`)
+- `.jellyfin/config/` - Old Jellyfin config, kept as a backup after the migration to the MacBook (no longer used by any NAS container)
+- `TV/`, `Movies/`, `Music/` - Media libraries; the MacBook Jellyfin mounts these over SMB (`smb://…/home`)
 - `.scripts/nas-healthcheck.sh` - Host-side healthcheck run by DSM Task Scheduler
 
 ### Tailscale Integration
@@ -81,23 +94,26 @@ The Caddyfile at `/Users/eligundry/Code/queensbridge-nas/Caddyfile` must be sync
 ### Service Ports
 Internal service ports (before Caddy reverse proxy):
 - QBittorrent: 8888
-- Jellyfin: 8096
 - Synology DSM: 5001 (HTTPS)
 - Caddy admin API: 2019 (used for healthchecks)
 
+Jellyfin (8096) runs on the MacBook, not the NAS.
+
 ### Tailscale Funnel
-Public access to Jellyfin uses Tailscale Funnel on port 10000, which forwards to
-Caddy's Jellyfin site (`https+insecure://localhost:8445`) rather than directly
-to Jellyfin. Enable it once with `./setup-tailscale-funnel.sh`.
+Public access to Jellyfin uses Tailscale Funnel on port 10000 — but on the
+**MacBook** node, pointing straight at the local Jellyfin (`http://127.0.0.1:8096`,
+no Caddy). Enable it once with `./setup-tailscale-funnel.sh` (run on the MacBook).
+The NAS no longer runs a Jellyfin funnel.
 
 ### Health Checks
-Every service defines a Docker `healthcheck` (for visibility in `docker ps`) and
-uses `restart: unless-stopped` so Docker restarts anything that exits. There is
-**no** `autoheal` sidecar — on this Synology its `docker restart` calls failed
+Every NAS service defines a Docker `healthcheck` (for visibility in `docker ps`)
+and uses `restart: unless-stopped` so Docker restarts anything that exits. There
+is **no** `autoheal` sidecar — on this Synology its `docker restart` calls failed
 (exit 128) and it churned healthy containers, causing more outages than it fixed.
-`healthcheck.sh` verifies all services (including the public Funnel URL) from a
-client machine and is run by `deploy.sh`. `nas-healthcheck.sh` runs on the NAS
-via DSM Task Scheduler to self-heal networking and notify via `synodsmnotify`.
+`healthcheck.sh` verifies services from a client machine (including the MacBook
+Jellyfin funnel URL) and is run by `deploy.sh`. `nas-healthcheck.sh` runs on the
+NAS via DSM Task Scheduler to self-heal networking and notify via `synodsmnotify`
+(it probes qBittorrent + Caddy only; Jellyfin is no longer on the NAS).
 
 ### NAS Deployment Notes
 The Docker socket on the NAS is `root`-owned, so `docker`/`docker compose`

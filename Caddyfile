@@ -16,25 +16,9 @@ it-was-written.tail7aee2.ts.net:8444 {
     }
 }
 
-# Jellyfin Media Server
-# Serves the tailnet directly on :8445, and is the backend for the public
-# Tailscale Funnel on :10000 (funnel -> https+insecure://localhost:8445).
-it-was-written.tail7aee2.ts.net:8445 {
-    tls {
-        get_certificate tailscale
-    }
-    reverse_proxy localhost:8096 {
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto https
-        header_up X-Forwarded-Host {host}
-        header_up X-Real-IP {remote_host}
-
-        transport http {
-            read_timeout 0
-            write_timeout 0
-        }
-    }
-}
+# Jellyfin was migrated off the NAS to the MacBook (macbook-of-eli), which serves
+# it via its own Tailscale Funnel at https://macbook-of-eli.tail7aee2.ts.net:10000.
+# Caddy no longer proxies Jellyfin. See README.
 
 # Synology NAS Web UI (HTTPS)
 it-was-written.tail7aee2.ts.net:8443 {

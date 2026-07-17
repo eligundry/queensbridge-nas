@@ -28,10 +28,11 @@ info()  { echo -e "\033[0;34m[INFO]\033[0m $1"; }
 warn()  { echo -e "\033[0;33m[WARN]\033[0m $1"; }
 
 # name|url|expected_http_code  (expected code "2xx3xx" means any 200-399)
+# Jellyfin runs on the MacBook now (macbook-of-eli), not the NAS — it reads the
+# media from the NAS over SMB and serves via its own Tailscale Funnel on :10000.
 SERVICES=(
   "qBittorrent|https://${HOST}:8444|2xx3xx"
-  "Jellyfin (tailnet)|https://${HOST}:8445/health|200"
-  "Jellyfin (funnel/public)|https://${HOST}:10000/health|200"
+  "Jellyfin (MacBook funnel)|https://macbook-of-eli.tail7aee2.ts.net:10000/health|200"
   "Synology DSM|https://${HOST}:8443|2xx3xx"
 )
 

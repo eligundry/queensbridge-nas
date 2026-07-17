@@ -12,8 +12,6 @@ services:
       - /var/packages/Tailscale/var:/var/run/tailscale:ro
     environment:
       - TZ=America/New_York
-    depends_on:
-      - jellyfin
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/ || exit 1"]
       interval: 30s
@@ -79,25 +77,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 180s
-
-  jellyfin:
-    container_name: jellyfin
-    image: lscr.io/linuxserver/jellyfin:latest
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      - PUID=1026
-      - PGID=100
-      - TZ=America/New_York
-      - JELLYFIN_PublishedServerUrl=https://it-was-written.tail7aee2.ts.net:10000
-    volumes:
-      - ${DATA_DIR}/.jellyfin/config:/config
-      - ${DATA_DIR}/TV:/data/tv
-      - ${DATA_DIR}/Movies:/data/movies
-      - ${DATA_DIR}/Music:/data/music
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8096/health -o /dev/null || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 90s

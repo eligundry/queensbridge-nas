@@ -30,11 +30,11 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 # qBittorrent's WebUI (:8888) is published on the host by the gluetun container
 # (qBittorrent shares gluetun's netns). It's safe to probe now that the VPN
 # kill-switch lives inside gluetun and no longer touches the host.
+# Jellyfin is NOT probed here: it was moved off the NAS to the MacBook and no
+# longer runs on this host.
 SERVICES=(
-  "jellyfin|http://127.0.0.1:8096/health|200"
   "qbittorrent|http://127.0.0.1:8888|2xx3xx"
   "caddy|http://127.0.0.1:2019/config/|200"
-  "jellyfin-funnel|https://${HOST}:10000/health|200"
 )
 
 probe() { curl -sk -o /dev/null -m "$TIMEOUT" -w "%{http_code}" "$1" 2>/dev/null; }

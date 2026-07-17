@@ -7,18 +7,22 @@ Nasir Jones AKA Nas!
 ![Nas album Illmatic cover](https://upload.wikimedia.org/wikipedia/en/2/27/IllmaticNas.jpg)
 
 The repository contains configurations for Docker containers running on this
-device. I'm primarily using it to backup my computer via Time Machine and as
-a torrent powered Tivo device through Jellyfin. All access goes through
-Tailscale.
+device. I'm primarily using it to backup my computer via Time Machine and to
+store the media library that feeds my torrent-powered Tivo. All access goes
+through Tailscale.
+
+Media playback is served by **Jellyfin, which runs on my MacBook** (not the
+NAS) — the NAS's ARM Realtek SoC is too weak to transcode, so Jellyfin was moved
+to the Apple Silicon Mac (VideoToolbox hardware transcoding) where it reads the
+media from this NAS over SMB. See [Jellyfin (runs on the MacBook)](#jellyfin-runs-on-the-macbook).
 
 ## Services
 
 All services are accessible with automatic HTTPS certificates via Tailscale:
 
 - **QBittorrent** - `https://it-was-written.tail7aee2.ts.net:8444` - Torrent client with PIA VPN (Tailscale network only)
-- **Jellyfin (Tailscale network)** - `https://it-was-written.tail7aee2.ts.net:8445` - Media server for movies, TV, and music
-- **Jellyfin (Public via Funnel)** - `https://it-was-written.tail7aee2.ts.net:10000` - Public access (proxied through Caddy)
 - **Synology DSM** - `https://it-was-written.tail7aee2.ts.net:8443` - NAS web interface
+- **Jellyfin** - `https://macbook-of-eli.tail7aee2.ts.net:10000` - Media server for movies, TV, and music (**runs on the MacBook**, reads media from the NAS over SMB)
 
 ## SSL/TLS Configuration
 
@@ -79,34 +83,62 @@ If needed, you can manually deploy via SSH:
 ssh nas "cd /volume1/docker && docker compose up -d"
 ```
 
-## Tailscale Funnel Setup (One-Time)
+## Jellyfin (runs on the MacBook)
 
-Jellyfin is exposed publicly on port 10000 via Tailscale Funnel. The Funnel
-forwards to Caddy's Jellyfin site on `:8445` (not directly to Jellyfin), so
-Caddy stays the single reverse-proxy source of truth:
+Jellyfin **does not run on the NAS**. The NAS's ARM Realtek RTD1619B has no
+hardware video encoder, so any transcode pegged all four cores and stuttered.
+Jellyfin now runs on the MacBook (`macbook-of-eli`, Apple Silicon) as a headless
+`launchd` service. It reads the media from the NAS over SMB and, when a client
+does need a transcode, uses **VideoToolbox** hardware acceleration. The media
+still lives on the NAS under `${DATA_DIR}/{TV,Movies,Music}`.
+
+The service files live in [`macbook-jellyfin/`](macbook-jellyfin/):
+
+| File | Purpose |
+|------|---------|
+| `org.jellyfin.server.plist` | LaunchAgent (`~/Library/LaunchAgents/`), `RunAtLoad` + `KeepAlive` |
+| `jellyfin-run.sh` | Wrapper: mounts the NAS, then runs the bundled Jellyfin server under `caffeinate` |
+| `jellyfin-mount-nas.sh` | Mounts `smb://…/home` at `~/nas-media` (password from a `0600` file) |
+| `rewrite_paths.py` | One-time migration tool that rewrote container paths (`/data/*`, `/config/data`) to the Mac paths in the migrated Jellyfin DB |
+
+**Layout on the Mac:**
+- App (server + `jellyfin-ffmpeg`): `/Applications/Jellyfin.app` (`brew install --cask jellyfin`)
+- Data/config/cache/log: `~/.local/share/jellyfin/` (migrated from the NAS `.jellyfin/config`)
+- Media mount: `~/nas-media` → `smb://eligundry@100.91.114.32/home`
+
+**Full Disk Access is required.** macOS blocks background (`launchd`) processes
+from *reading* network volumes unless granted Full Disk Access. Add
+`/Applications/Jellyfin.app/Contents/MacOS/jellyfin` under **System Settings →
+Privacy & Security → Full Disk Access**. Without it, Jellyfin starts and serves
+the web UI but can't read any media.
+
+**Manage the service:**
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.jellyfin.server.plist  # start/install
+launchctl bootout   gui/$(id -u)/org.jellyfin.server                               # stop
+launchctl kickstart -k gui/$(id -u)/org.jellyfin.server                            # restart
+```
+
+### Tailscale Funnel (One-Time, on the MacBook)
+
+Jellyfin is exposed publicly on port 10000 via Tailscale Funnel, pointing
+straight at the local Jellyfin HTTP port (`8096`) — "raw", no Caddy. Run this on
+the MacBook (funnel config is persistent and survives reboots):
 
 ```bash
-# Run the helper (prompts for your NAS sudo password)
+# helper
 ./setup-tailscale-funnel.sh
 
-# ...or manually (one-time setup - configuration persists across reboots)
-ssh nas
-sudo /var/packages/Tailscale/target/bin/tailscale funnel --https=10000 --bg https+insecure://localhost:8445
+# ...or manually
+tailscale funnel --bg --https=10000 http://127.0.0.1:8096
 
-# Verify Funnel status
+# verify
 tailscale funnel status
 ```
 
-**Note:** Tailscale Funnel configuration is persistent and survives reboots. You only need to run this once, or after changing ports/backends.
-
-### Jellyfin First-Run Setup
-
-After deploying, open `https://it-was-written.tail7aee2.ts.net:8445` and:
-1. Complete the setup wizard (create the admin user).
-2. Add libraries pointing at the in-container paths: `/data/tv`, `/data/movies`, `/data/music`.
-3. (Optional) Dashboard → Networking: confirm the **Published Server URL** is
-   `https://it-was-written.tail7aee2.ts.net:10000` (also set via the
-   `JELLYFIN_PublishedServerUrl` env var in `docker-compose.yml`).
+Because the Funnel forwards to `localhost:8096` with no `X-Forwarded-For`,
+Jellyfin sees Funnel clients as local — so they aren't hit by the "remote"
+bitrate cap, which favors Direct Play over transcoding.
 
 ## qBittorrent + PIA VPN (via gluetun)
 
