@@ -10,12 +10,14 @@ This is a Docker-based NAS configuration for hosting media services. All service
 
 ### Service Stack
 - **Caddy** - Reverse proxy handling HTTPS termination with Tailscale certificates
-- **QBittorrent** - Torrent client with PIA VPN integration (image: j4ym0/pia-qbittorrent)
+- **gluetun** - PIA VPN gateway (image: qmcgaw/gluetun); qBittorrent routes through it
+- **QBittorrent** - Torrent client (image: lscr.io/linuxserver/qbittorrent), no built-in VPN — uses `network_mode: service:gluetun`
 - **Jellyfin** - Media server for TV, movies, and music (image: lscr.io/linuxserver/jellyfin)
 
 ### Network Configuration
-All app services use `network_mode: host` (qBittorrent is the exception — it runs
-in bridge mode; see below) and are accessible within the Tailscale network at
+Caddy and Jellyfin use `network_mode: host`. gluetun runs in Docker bridge mode
+and qBittorrent shares gluetun's network namespace (`network_mode: service:gluetun`);
+see the VPN section below. Services are accessible within the Tailscale network at
 `it-was-written.tail7aee2.ts.net` with different ports:
 - 8444 - QBittorrent
 - 8445 - Jellyfin (tailnet)
@@ -105,26 +107,37 @@ without a password; other commands (e.g. `iptables`, `reboot`) still prompt.
 `deploy.sh` uses `ssh -t` + `sudo` for the container reload. File syncing
 (compose, Caddyfile, configs) does not need sudo.
 
-### qBittorrent + VPN (bridge mode — do NOT use host networking)
-qBittorrent runs the `j4ym0/pia-qbittorrent` image, which includes a PIA VPN
-**kill-switch**. It MUST run in **bridge mode** (the upstream design), never
-`network_mode: host`:
-- **Bridge mode:** the kill-switch programs iptables inside the container's own
-  network namespace. A VPN failure only firewalls the container — the host is
-  untouched. The WebUI is published on host port `8888` (DNAT) so Caddy can proxy
-  `localhost:8888`. Requires `ALLOW_LOCAL_SUBNET_TRAFFIC=true` for LAN/Caddy
-  access through the kill-switch.
-- **Host mode (the old bug):** the kill-switch clobbered the **host's** iptables
-  (default policies → `DROP`) and `/etc/resolv.conf`, so any VPN drop took the
-  whole NAS offline (DNS dead) and it couldn't self-recover. This was the root of
-  the recurring "networking just breaks" problem. Fixed by moving to bridge mode.
+### qBittorrent + VPN (via gluetun — do NOT use the old j4ym0 image)
+qBittorrent has **no built-in VPN**. It routes all traffic through **gluetun**
+(`qmcgaw/gluetun`), a dedicated PIA VPN gateway container, via
+`network_mode: service:gluetun`. gluetun runs OpenVPN + its kill-switch entirely
+inside its own network namespace and **never touches the host's iptables**. A VPN
+drop can only cut off the containers sharing gluetun's netns (qBittorrent) — the
+host stays online.
+- The WebUI is published on gluetun's port `8888` (qBittorrent shares that netns),
+  so Caddy proxies `localhost:8888` exactly as before. `FIREWALL_INPUT_PORTS=8888`
+  opens the WebUI through gluetun's kill-switch.
+- PIA credentials are passed as `OPENVPN_USER`/`OPENVPN_PASSWORD` (`${PIA_USERNAME}`
+  / `${PIA_PASSWORD}`); region via `SERVER_REGIONS=US East`.
+- gluetun auto-creates `/dev/net/tun` (needs `cap_add: NET_ADMIN`), so no device
+  mapping is required.
 
-Synology gotcha: Docker bridge port-publishing needs the nat `DOCKER` iptables
-chain, which Synology sometimes drops (symptom: `iptables: No chain/target/match
-by that name` / `unable to find chain 'DOCKER'`, and published ports return 000).
-Recreate it by restarting the daemon: `sudo synopkg restart ContainerManager`.
+**Why we abandoned `j4ym0/pia-qbittorrent`:** its PIA kill-switch clobbered the
+**host's** iptables (INPUT policy → `DROP`) and took the whole NAS offline on any
+restart/VPN drop — in **both** host mode AND Docker bridge mode on this Synology
+(the bridge-mode isolation we assumed did not hold). This was the root of the
+recurring "networking just breaks" outages. gluetun's self-contained firewall is
+the fix.
 
-Legacy DNS recovery (only needed if host networking ever gets clobbered again):
-`./deploy.sh --heal-dns` resets iptables policies to `ACCEPT` + restores
-resolv.conf; `nas-healthcheck.sh` does this automatically as its first
-remediation step.
+**Config migration note:** both images run `qbittorrent-nox --profile=/config`, so
+the profile layout (`/config/qBittorrent/config/qBittorrent.conf`,
+`/config/qBittorrent/data/BT_backup/`) should carry over and preserve the existing
+torrents when switching to `lscr.io/linuxserver/qbittorrent`. Verify on first boot;
+if the linuxserver image looks for a flat `/config/qBittorrent/qBittorrent.conf`,
+move the old files into the layout it expects before trusting the torrent list.
+
+DNS recovery (if the host firewall ever gets clobbered again — e.g. by the old
+image before this migration): `./deploy.sh --heal-dns` resets iptables policies to
+`ACCEPT` + restores resolv.conf; `nas-healthcheck.sh` does this automatically as
+its first remediation step. **This requires host access** — if the NAS is already
+inbound-firewalled, SSH won't get in; recover via LAN/DSM terminal or a reboot.

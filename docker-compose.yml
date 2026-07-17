@@ -21,50 +21,64 @@ services:
       retries: 3
       start_period: 20s
 
-  # qBittorrent + PIA VPN. Runs in BRIDGE mode (NOT host) — this is how the
-  # upstream image (j4ym0/pia-qbittorrent) is designed to run. Its VPN
-  # kill-switch programs iptables inside the CONTAINER's own network namespace,
-  # so a VPN failure can only firewall off the container, never the host. This
-  # is the fix for the recurring "NAS DNS/networking breaks" problem: previously
-  # this ran network_mode: host, so the kill-switch clobbered the host's iptables
-  # + resolv.conf and took the whole NAS offline whenever the VPN dropped.
+  # PIA VPN gateway. gluetun runs OpenVPN + a kill-switch ENTIRELY inside its own
+  # container network namespace — it never touches the host's iptables. This is
+  # the fix for the recurring "restarting the torrent client takes the whole NAS
+  # offline" problem: the previous image (j4ym0/pia-qbittorrent) ran a kill-switch
+  # that, even in Docker bridge mode, clobbered the HOST's iptables (INPUT policy
+  # -> DROP) on this Synology and firewalled the box off the network. gluetun's
+  # firewall is self-contained, so a VPN drop can only cut off the containers that
+  # share this netns (qbittorrent), never the host.
   #
-  # The WebUI is published on host port 8888 (DNAT) so Caddy (host networking)
-  # can reverse-proxy it at localhost:8888. ALLOW_LOCAL_SUBNET_TRAFFIC lets the
-  # LAN/Caddy reach the WebUI through the kill-switch.
-  #
-  # NOTE: Docker bridge port-publishing needs the nat "DOCKER" iptables chain,
-  # which Synology sometimes drops. If the WebUI 8888 stops working after a
-  # reboot, restart Container Manager to recreate it:
-  #   sudo synopkg restart ContainerManager
-  qbittorrent:
-    image: j4ym0/pia-qbittorrent
-    container_name: qbittorrent
-    init: true
+  # qBittorrent's WebUI is published HERE (8888) because qbittorrent joins this
+  # container's network namespace via `network_mode: service:gluetun`. Caddy (host
+  # networking) reverse-proxies it at localhost:8888. FIREWALL_INPUT_PORTS opens
+  # 8888 through gluetun's kill-switch so the WebUI is reachable.
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
     ports:
-      - "8888:8888"
+      - "8888:8888"   # qBittorrent WebUI (qbittorrent shares this netns)
     environment:
-      - PIA_REGION=US_EAST
-      - PIA_USERNAME=${PIA_USERNAME}
-      - PIA_PASSWORD=${PIA_PASSWORD}
-      - ALLOW_LOCAL_SUBNET_TRAFFIC=true
-      - LEGACY_IPTABLES=true
+      - VPN_SERVICE_PROVIDER=private internet access
+      - VPN_TYPE=openvpn
+      - OPENVPN_USER=${PIA_USERNAME}
+      - OPENVPN_PASSWORD=${PIA_PASSWORD}
+      - SERVER_REGIONS=US East
+      - FIREWALL_INPUT_PORTS=8888
       - TZ=America/New_York
+    # gluetun ships its own healthcheck (pings the internet through the tunnel),
+    # so nothing extra is needed here.
+
+  # qBittorrent with NO built-in VPN — it routes all traffic through gluetun's
+  # network namespace. If gluetun's tunnel drops, gluetun's kill-switch blocks
+  # qBittorrent's traffic without any effect on the host.
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      - PUID=1026
+      - PGID=100
+      - TZ=America/New_York
+      - WEBUI_PORT=8888
     volumes:
       - ${DATA_DIR}:/mnt/nas
       - ${DATA_DIR}/.qbittorrent/config:/config
       - ${DATA_DIR}/Torrents:/downloads
     healthcheck:
-      # Long start_period: the WebUI only comes up after the VPN connects, which
-      # can take a couple of minutes.
       test: ["CMD-SHELL", "curl -fsS http://localhost:8888 -o /dev/null || wget -qO /dev/null http://localhost:8888 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 300s
+      start_period: 180s
 
   jellyfin:
     container_name: jellyfin

@@ -124,12 +124,14 @@ verify_services() {
 
 # Heal broken NAS DNS / networking.
 #
-# Root cause: the PIA qBittorrent container (network_mode: host + NET_ADMIN) runs
-# a VPN kill-switch that sets the HOST's iptables default policies to DROP and
-# rewrites /etc/resolv.conf. If the VPN fails to connect, it leaves the host
-# firewalled off — DNS and all outbound networking die. (qBittorrent is now
-# gated behind the "torrent" compose profile so it can't start automatically,
-# but if it ever ran and wedged, this undoes the damage.)
+# Root cause (historical): the old j4ym0/pia-qbittorrent container ran a VPN
+# kill-switch that set the HOST's iptables default policies to DROP and rewrote
+# /etc/resolv.conf, firewalling the whole NAS off whenever the VPN dropped — in
+# both host AND bridge mode on this Synology. That image has been replaced by
+# gluetun (self-contained firewall, never touches the host), so this should no
+# longer trigger; kept as a recovery tool in case the host firewall is ever
+# clobbered again. NOTE: needs host access — if the NAS is already inbound-
+# firewalled, SSH can't get in; recover via LAN/DSM terminal or a reboot.
 #
 # This resets the default policies back to ACCEPT and restores resolv.conf.
 # Requires sudo on the NAS (iptables is not in the passwordless sudo scope), so

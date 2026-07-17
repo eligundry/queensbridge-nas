@@ -108,27 +108,29 @@ After deploying, open `https://it-was-written.tail7aee2.ts.net:8445` and:
    `https://it-was-written.tail7aee2.ts.net:10000` (also set via the
    `JELLYFIN_PublishedServerUrl` env var in `docker-compose.yml`).
 
-## qBittorrent, the VPN kill-switch, and NAS DNS
+## qBittorrent + PIA VPN (via gluetun)
 
-**Background:** qBittorrent (`j4ym0/pia-qbittorrent`) ships a PIA VPN
-**kill-switch**. It is designed to run in Docker **bridge mode**, and this repo
-runs it that way — its WebUI is published on host port `8888` and Caddy proxies
-`localhost:8888`. In bridge mode the kill-switch only affects the container, so a
-VPN drop can **never** take down the NAS.
+**How it works:** qBittorrent has **no built-in VPN**. It routes all traffic
+through **[gluetun](https://github.com/qdm12/gluetun)** (`qmcgaw/gluetun`), a
+dedicated PIA VPN gateway container, using `network_mode: service:gluetun`.
+gluetun runs OpenVPN plus a kill-switch **entirely inside its own network
+namespace** and never touches the host's iptables. If the tunnel drops, only the
+containers sharing gluetun's namespace (qBittorrent) lose connectivity — the NAS
+stays online. qBittorrent's WebUI is published on gluetun's port `8888`, and
+Caddy proxies `localhost:8888` (with `FIREWALL_INPUT_PORTS=8888` opening it
+through gluetun's kill-switch).
 
-**Historical bug (now fixed):** it used to run `network_mode: host`, so the
-kill-switch reprogrammed the **host's** iptables (default policies → `DROP`) and
-`/etc/resolv.conf`. Any VPN failure firewalled the whole NAS off — DNS died, and
-a failing qBittorrent couldn't resolve PIA to reconnect, so the outage stuck.
-That was the root of the recurring "networking just breaks."
+**Why not the old `j4ym0/pia-qbittorrent` image?** Its PIA kill-switch
+reprogrammed the **host's** iptables (default policies → `DROP`) and took the
+entire NAS offline on any restart or VPN drop — in **both** `network_mode: host`
+**and** Docker bridge mode on this Synology. That was the root of the recurring
+"networking just breaks" outages. gluetun's self-contained firewall fixes it.
 
-**Synology gotcha:** bridge port-publishing needs the nat `DOCKER` iptables
-chain, which Synology sometimes drops after a reboot (symptom: qBittorrent's
-WebUI on `:8444`/`:8888` returns nothing, and container start logs show
-`iptables: No chain/target/match by that name`). Recreate it by restarting the
-daemon: `ssh nas "sudo synopkg restart ContainerManager"`.
+**Config migration:** both images run `qbittorrent-nox --profile=/config`, so the
+existing torrents/config under `${DATA_DIR}/.qbittorrent/config` should carry over
+unchanged. Verify the torrent list on first boot.
 
-### Recovering broken DNS (legacy — only if host networking ever gets clobbered)
+### Recovering broken DNS (only if host networking ever gets clobbered)
 
 If the NAS ever loses DNS / all outbound networking (`nslookup` times out,
 containers can't pull), reset the iptables default policies back to `ACCEPT`:

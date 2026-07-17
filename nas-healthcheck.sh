@@ -27,11 +27,12 @@ TIMEOUT=15
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 # name|url|expected  (expected "2xx3xx" = any 200-399, otherwise exact code)
-# qBittorrent (:8888) is intentionally omitted — it's gated behind the "torrent"
-# compose profile and off by default (its VPN kill-switch breaks host
-# networking). Add it back if/when you re-enable it.
+# qBittorrent's WebUI (:8888) is published on the host by the gluetun container
+# (qBittorrent shares gluetun's netns). It's safe to probe now that the VPN
+# kill-switch lives inside gluetun and no longer touches the host.
 SERVICES=(
   "jellyfin|http://127.0.0.1:8096/health|200"
+  "qbittorrent|http://127.0.0.1:8888|2xx3xx"
   "caddy|http://127.0.0.1:2019/config/|200"
   "jellyfin-funnel|https://${HOST}:10000/health|200"
 )
