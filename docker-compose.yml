@@ -63,7 +63,13 @@ services:
       gluetun:
         condition: service_healthy
     environment:
-      - PUID=1026
+      # ~85% of the existing media library (TV/Movies) is owned by legacy uid 700
+      # (written by the pre-migration j4ym0/Plex images). Running the container as
+      # 700 lets it WRITE into those legacy folders — required to re-download into
+      # an existing show dir (e.g. Joe Pera S01), not just seed it read-only.
+      # PGID stays 100 (users); ${DATA_DIR}/Torrents is chmod 775 so downloads
+      # remain group-writable for gid 100.
+      - PUID=700
       - PGID=100
       - TZ=America/New_York
       - WEBUI_PORT=8888
